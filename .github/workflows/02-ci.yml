@@ -44,3 +44,6 @@ jobs:
 
           echo "Python version:"
           python --version
+
+      - name: disply the date
+        run: date
