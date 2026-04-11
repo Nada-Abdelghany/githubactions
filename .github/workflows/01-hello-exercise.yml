@@ -1,0 +1,18 @@
+name: 01 Hello exercise
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [closed]
+
+  workflow_dispatch:
+
+jobs:
+  run-on-merge:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run only if PR was merged
+        run: echo " PR was merged into main"
