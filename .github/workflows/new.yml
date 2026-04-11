@@ -1,0 +1,85 @@
+name: 90 OPTIONAL Full Containerized CI/CD Workflow
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: tiny-health-app
+  IMAGE_TAR: tiny-health-app-full.tar
+  ARTIFACT_NAME: tiny-health-app-full-image
+  APP_PORT: "8000"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: python -m unittest discover -s tests -v
+
+  build-and-test:
+    needs: verify
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        base_image: ["python:3.11-slim", "python:3.12-slim"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set image tag
+        id: image-tag
+        run: |
+          TODAY="$(date -u +%Y-%m-%d)"
+          SAFE_BASE=$(echo "${{ matrix.base_image }}" | tr ':' '-' )
+          IMAGE_TAG="${TODAY}-${GITHUB_RUN_ID}-${SAFE_BASE}"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "${IMAGE_NAME}:${{ steps.image-tag.outputs.image_tag }}" \
+            --build-arg BASE_IMAGE=${{ matrix.base_image }} \
+            -f Dockerfile.arg-base \
+            .
+
+      - name: Save Docker image
+        run: docker save "${IMAGE_NAME}:${{ steps.image-tag.outputs.image_tag }}" -o "${IMAGE_TAR}"
+
+      - name: Upload artifact (per matrix)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ matrix.base_image }}
+          path: ${{ env.IMAGE_TAR }}
+
+      - name: Load Docker image
+        run: docker load --input "${IMAGE_TAR}"
+
+      - name: Run container
+        run: |
+          docker run -d \
+            --name tiny-health-container-${{ matrix.base_image }} \
+            -p "${APP_PORT}:${APP_PORT}" \
+            "${IMAGE_NAME}:${{ steps.image-tag.outputs.image_tag }}"
+
+      - name: Smoke test
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent "http://127.0.0.1:${APP_PORT}/health"; then
+              exit 0
+            fi
+            echo "Waiting..."
+            sleep 2
+          done
+          exit 1
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f tiny-health-container-${{ matrix.base_image }} || true
